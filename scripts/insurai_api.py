@@ -2,7 +2,7 @@
 """
 Copyright (c) 2026 JRSoft Technology Ltd.
 Licensed under the MIT License.
-Version: 1.0.3
+Version: 1.0.4
 
 InsurAI API Helper - Wraps all InsurAI API calls.
 
@@ -385,7 +385,7 @@ def batch_metadata(product_codes: List[str], show_progress: bool = False) -> Lis
     return results
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
-USAGE = """InsurAI API Helper  v1.0.3
+USAGE = """InsurAI API Helper  v1.0.4
 Usage:
   python3 insurai_api.py occupations_search --keyword <keyword>
   python3 insurai_api.py plan_interpret     --scenario <text>
