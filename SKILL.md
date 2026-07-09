@@ -1,7 +1,7 @@
 ---
 name: insurai-tw
-version: 1.0.4
-description: Use for Republic of China (Taiwan) personal insurance tasks through the InsurAI Agent API, including insurance planning interpretation, occupation classification, product recommendation and search, metadata lookup, contract or premium document retrieval, and PDF link lookup. Apply the mandatory scope and rejection rules before any API call. Requires INSURAI_API_KEY from https://insurai.com.tw. 適用於中華民國（臺灣）保險相關任務，包括保險規劃分析、保險商品推薦、商品檢索、文件取得、商品 metadata 查詢與保險個人職業分類表查詢。使用前需先至 https://insurai.com.tw 註冊會員並申請 INSURAI-API-KEY。
+version: 1.0.5
+description: Use for Republic of China (Taiwan) personal insurance tasks through the InsurAI Agent API, including insurance planning interpretation, occupation classification, product recommendation and search, policy review, coverage-gap analysis, metadata lookup, contract or premium document retrieval, and PDF link lookup. Apply the mandatory scope and rejection rules before any API call. For policy images or PDFs, use external OCR/document-processing capability first, then analyze the extracted text with this skill. Requires INSURAI_API_KEY from https://insurai.com.tw. 適用於中華民國（臺灣）保險相關任務，包括保險規劃分析、保單檢視、保障缺口分析、保險商品推薦、商品檢索、文件取得、商品 metadata 查詢與保險個人職業分類表查詢。呼叫 API 前請先套用必要的適用範圍與拒絕規則；若為保單圖片或 PDF，須先由外部 OCR／文件處理能力轉成文字後，再交由本 skill 分析。使用前需先至 https://insurai.com.tw 註冊會員並申請 INSURAI-API-KEY。
 ---
 
 # InsurAI Taiwan
@@ -28,6 +28,7 @@ Privacy and data handling:
 
 - User inputs for insurance planning and product lookup may include sensitive personal or financial information, such as age, gender, location, occupation, family situation, insurance holdings, health-related context, and coverage needs.
 - The helper transmits the minimum fields required for the selected action to `INSURAI_AGENT_URL`.
+- For policy images or PDFs, use external OCR or document-processing capability first, then submit only the extracted text and the minimum follow-up inputs needed for analysis.
 - Before invoking the API for the first time in a conversation, tell users that their insurance/planning inputs will be sent to the configured InsurAI Agent API endpoint and obtain their consent to continue.
 - Minimize submitted data. Do not include national ID numbers, contact details, full policy documents, payment data, medical records, or other unnecessary identifiers unless the user explicitly requests it and the selected action requires it.
 - When assisting someone other than the requester, obtain the person's consent before sending their personal insurance or planning information.
@@ -51,11 +52,11 @@ Boundaries:
 
 - This skill does not enumerate local files.
 - This skill does not enumerate environment variables; it reads only `INSURAI_AGENT_URL` and `INSURAI_API_KEY`.
-- This skill does not read or upload user files.
+- This skill does not read or upload user files to the InsurAI API. For policy images or PDFs, external OCR or document-processing capability must extract text first, and this skill analyzes only the extracted text plus required follow-up inputs.
 - This skill does not print or expose `INSURAI_API_KEY`.
 - This skill does not execute `sudo`, install packages, fetch external scripts, or run arbitrary shell commands.
 
-中文摘要：本 skill 僅透過內建 Python helper 呼叫 InsurAI Agent API，只讀取 `INSURAI_AGENT_URL` 與 `INSURAI_API_KEY`，不列舉環境變數、不讀取或上傳使用者檔案、不輸出 API key，也不執行 sudo、安裝套件、下載外部腳本或任意 shell 指令。`INSURAI_AGENT_URL` 必須使用 HTTPS；保險查詢資料送出前應告知使用者、取得同意，並採最小化原則。
+中文摘要：本 skill 僅透過內建 Python helper 呼叫 InsurAI Agent API，只讀取 `INSURAI_AGENT_URL` 與 `INSURAI_API_KEY`，不列舉環境變數、不直接將使用者檔案上傳至 API、不輸出 API key，也不執行 sudo、安裝套件、下載外部腳本或任意 shell 指令。若為保單圖片或 PDF，須先由外部 OCR／文件處理能力轉成文字，再以最小必要資訊交由本 skill 分析。`INSURAI_AGENT_URL` 必須使用 HTTPS；保險查詢資料送出前應告知使用者、取得同意，並採最小化原則。
 
 ## Required References
 
@@ -64,6 +65,7 @@ Read references according to the task:
 - Read [insurai-rules.md](references/insurai-rules.md) before every request. It defines supported scope, mandatory rejection responses, insurer normalization, value domains, workflow rules, and response behavior.
 - Read [insurai-api-spec.md](references/insurai-api-spec.md) when selecting an endpoint or interpreting request and response fields.
 - Read [insurai-api-script.md](references/insurai-api-script.md) when invoking or troubleshooting the Python helper.
+- Read [policy-review-workflow.md](references/policy-review-workflow.md) for policy review, coverage-gap analysis, cancellation/keep comparisons, or when the user provides an existing policy image, PDF, or product list for evaluation.
 
 Treat `insurai-rules.md` as authoritative for business behavior and `insurai-api-spec.md` as authoritative for the REST contract.
 
@@ -82,7 +84,9 @@ python3 scripts/insurai_api.py <action> [args...]
 ```
 
 8. Base product-specific claims on API results. Do not invent products, benefits, premiums, underwriting rules, documents, or PDF links.
-9. Follow endpoint-specific error handling and stop when the rules require it.
+9. For policy review tasks, first normalize the user's existing policy into product candidates, convert policy short codes to InsurAI `productCode` values via `search`, then use `batch-metadata` or `metadata` before making product-specific claims.
+10. For policy review recommendations, compare current coverage against the user's needs, then validate shortlisted products with `document --campaign-type premium` before quoting premiums or plan comparisons.
+11. Follow endpoint-specific error handling and stop when the rules require it.
 
 ## API Actions
 
@@ -110,12 +114,14 @@ Use `--insurers` for insurer names or codes and `--protection` for one or more p
 - When metadata includes `eligibleMainContracts`, interpret it as the list of main contracts that can pair with the current non-main product.
 - Expect metadata to include `officialRiderContracts` or `eligibleMainContracts` depending on whether the current product is main or non-main.
 - Use `officialRiderContracts` and `eligibleMainContracts` as authoritative pairing data; do not infer main-rider compatibility from product names alone.
+- For policy review, do not send policy short codes directly to `metadata`; resolve them to InsurAI `productCode` values first.
+- For policy review, do not present keep/cancel/reduce-or-replace conclusions before completing the API lookup and coverage-gap comparison workflow.
 - Return full Markdown or a PDF link only when the user asks for it.
 - Never continue with general insurance assumptions after an API error that requires stopping.
 
 ## Version
 
-Current version: `1.0.4`
+Current version: `1.0.5`
 
 ## Copyright
 
